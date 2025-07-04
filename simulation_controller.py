@@ -15,15 +15,27 @@ class SimulationController:
         self.step = 0
         self.event_queue = []
         self.lock = threading.Lock()
+        self.map_width = 80  # 地图宽度
+        self.map_height = 60  # 地图高度
+        self.shared_vision = {
+            "red": np.zeros((self.map_height, self.map_width)),  # 使用实际地图尺寸
+            "blue": np.zeros((self.map_height, self.map_width))
+        }
         
     def init_simulation(self):
         """初始化模拟环境"""
-        response = requests.post(f"{API_URL}/init")
-        if response.status_code == 200:
-            print("模拟初始化成功")
+        try:
+            print(f"尝试连接到API服务器: {API_URL}/init")
+            response = requests.post(f"{API_URL}/init", timeout=5.0)
+            print(f"收到响应状态码: {response.status_code}")
+            response.raise_for_status()
+            print("模拟初始化成功，响应内容:", response.text)
             return True
-        print("模拟初始化失败")
-        return False
+        except requests.exceptions.RequestException as e:
+            print(f"模拟初始化失败: {str(e)}")
+            if hasattr(e, 'response') and e.response:
+                print("错误响应内容:", e.response.text)
+            return False
     
     def create_explosion(self, x, y, radius=4):
         """创建爆炸事件"""
@@ -56,10 +68,21 @@ class SimulationController:
     
     def get_state(self):
         """获取当前状态"""
-        response = requests.get(f"{API_URL}/state")
-        if response.status_code == 200:
+        try:
+            response = requests.get(f"{API_URL}/state", timeout=3.0)
+            response.raise_for_status()
+            
+            # 添加原始响应内容检查
+            print(f"原始响应内容: {response.text[:200]}...")  # 打印前200字符
             return response.json()
-        return None
+        except Exception as e:
+            print(f"获取状态失败: {str(e)}")
+            # 返回带默认值的结构避免崩溃
+            return {
+                "terrain": [[0]*80 for _ in range(60)],
+                "units": [],
+                "structures": []
+            }
     
     def process_events(self):
         """处理事件队列"""

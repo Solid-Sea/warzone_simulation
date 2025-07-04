@@ -45,14 +45,14 @@ class Unit:
     def _set_unit_attributes(self):
         """根据单位类型设置战斗属性"""
         if self.type == "infantry":
-            self.attack_range = 2
-            self.damage = 10
-            self.vision_range = 8
-        elif self.type == "tank":
-            self.attack_range = 6
-            self.damage = 30
-            self.explosive_range = 2  # 短程爆炸范围
+            self.attack_range = 3  # 缩短攻击距离
+            self.damage = 15       # 提高近战伤害
             self.vision_range = 10
+        elif self.type == "tank":
+            self.attack_range = 8   # 增加射程
+            self.damage = 25        # 降低单发伤害
+            self.explosive_range = 3  # 扩大爆炸范围
+            self.vision_range = 12
         elif self.type == "artillery":
             self.attack_range = 20
             self.damage = 50

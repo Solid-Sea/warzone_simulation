@@ -40,6 +40,7 @@ class Renderer:
         self.width = width
         self.height = height
         self.cell_size = cell_size
+        self.show_shared_vision = False  # 新增视野显示开关
         self.map_width = width * cell_size
         self.map_height = height * cell_size
         self.screen_width = self.map_width + INFO_PANEL_WIDTH
@@ -105,9 +106,21 @@ class Renderer:
         self.render_structures(structures)
         self.render_units(units)
         if self.show_vision:
+            # 渲染同阵营共享视野
+            self.vision_surface.fill((0, 0, 0, 0))
+            self.render_vision_overlay(units)
             self.screen.blit(self.vision_surface, (0,0))
         self.render_info_panel(units, structures)
         pygame.display.flip()
+        
+        # 显示攻击目标指示
+        for unit in units:
+            if unit.is_active() and unit.attack_target:
+                start = (int((unit.position[0] + 0.5) * self.cell_size),
+                         int((unit.position[1] + 0.5) * self.cell_size))
+                end = (int((unit.attack_target[0] + 0.5) * self.cell_size),
+                       int((unit.attack_target[1] + 0.5) * self.cell_size))
+                pygame.draw.line(self.screen, (255, 0, 0), start, end, 2)
 
     def render_explosion(self, x, y, radius, intensity):
         """渲染爆炸特效"""

@@ -104,11 +104,97 @@ class WarzoneEnv(gym.Env):
     
     def _take_action(self, action):
         """将离散动作转换为游戏指令"""
-        # 示例动作映射（需根据实际需求完善）
-        if action == 0: pass  # 无操作
-        elif action == 1: self._move_units()
-        elif action == 2: self._attack_nearest()
+        # 更新后的动作映射
+        if action == 0:  # 无操作
+            pass
+        elif action == 1: 
+            self._move_units_randomly()
+        elif action == 2: 
+            self._attack_nearest_enemy()
+        elif action == 3:
+            self._defend_position()
+        elif action == 4:
+            self._retreat_units()
+        elif action == 5:
+            self._call_artillery_support()
+
+    def _move_units_randomly(self):
+        """随机移动友方单位"""
+        state = self.sim_controller.get_state()
+        if state and state.get("units"):
+            # 获取所有活跃的友方单位
+            friendly_units = [u for u in state["units"] if u["camp"] == "red" and u["status"] == "active"]
+            
+            for unit in friendly_units:
+                # 生成随机移动方向
+                dx = np.random.randint(-3, 4)
+                dy = np.random.randint(-3, 4)
+                new_x = max(0, min(79, unit["position"][0] + dx))
+                new_y = max(0, min(59, unit["position"][1] + dy))
+                
+                # 调用控制器移动单位
+                self.sim_controller.move_unit(unit["id"], new_x, new_y)
+
+    def _defend_position(self):
+        """防御模式：单位向最近的建筑移动"""
+        state = self.sim_controller.get_state()
+        if state and state.get("units") and state.get("structures"):
+            friendly_units = [u for u in state["units"] if u["camp"] == "red" and u["status"] == "active"]
+            buildings = [s for s in state["structures"] if s["type"] in ["bunker", "house"]]
+            
+            for unit in friendly_units:
+                # 找到最近的建筑
+                nearest_building = min(buildings, 
+                    key=lambda b: abs(b["position"][0]-unit["position"][0]) + abs(b["position"][1]-unit["position"][1]))
+                
+                # 移动到建筑周围
+                target_x = nearest_building["position"][0] + np.random.randint(-2,3)
+                target_y = nearest_building["position"][1] + np.random.randint(-2,3)
+                self.sim_controller.move_unit(unit["id"], target_x, target_y)
+
+    def _retreat_units(self):
+        """撤退模式：单位向地图边缘移动"""
+        state = self.sim_controller.get_state()
+        if state and state.get("units"):
+            friendly_units = [u for u in state["units"] if u["camp"] == "red" and u["status"] == "active"]
+            
+            for unit in friendly_units:
+                # 生成撤退方向（向左侧移动）
+                new_x = max(0, unit["position"][0] - 5)
+                new_y = unit["position"][1] + np.random.randint(-2,3)
+                self.sim_controller.move_unit(unit["id"], new_x, new_y)
+
+    def _call_artillery_support(self):
+        """请求炮兵支援"""
+        state = self.sim_controller.get_state()
+        if state and state.get("units"):
+            # 找到最近的敌方单位集群
+            enemies = [u for u in state["units"] if u["camp"] == "blue" and u["status"] == "active"]
+            if len(enemies) > 3:
+                cluster_center = np.mean([(u["position"][0], u["position"][1]) for u in enemies[:3]], axis=0)
+                self.sim_controller.call_artillery((int(cluster_center[0]), int(cluster_center[1])))
         
+    def _attack_nearest_enemy(self):
+        """攻击最近的敌方单位"""
+        state = self.sim_controller.get_state()
+        if state and state.get("units"):
+            # 获取所有活跃单位
+            active_units = [u for u in state["units"] if u.get("status") == "active"]
+            if len(active_units) < 2:
+                return
+                
+            # 找到最近的敌人
+            attacker = active_units[0]  # 简化逻辑，实际需选择友军单位
+            enemies = [u for u in active_units if u["camp"] != attacker["camp"]]
+            if enemies:
+                # 按距离排序并选择最近的
+                enemies.sort(key=lambda u: abs(u["position"][0]-attacker["position"][0]) + 
+                            abs(u["position"][1]-attacker["position"][1]))
+                target = enemies[0]
+                
+                # 调用控制器发起攻击
+                self.sim_controller.attack(attacker["id"], target["id"])
+
     def _calculate_reward(self):
         """计算即时奖励"""
         # 示例奖励函数
@@ -117,7 +203,7 @@ class WarzoneEnv(gym.Env):
         
         # 歼敌奖励
         reward += len([u for u in state['units'] 
-                     if u['camp'] == "blue" and not u['is_active']]) * 10
+            if u['camp'] == "blue" and u['status'] != "active"]) * 10
         
         # 时间惩罚
         reward -= 0.1
@@ -128,9 +214,9 @@ class WarzoneEnv(gym.Env):
         """检查是否结束"""
         state = self.sim_controller.get_state()
         active_red = len([u for u in state['units'] 
-                        if u['camp'] == "red" and u['is_active']])
+                    if u['camp'] == "red" and u['status'] == "active"])
         active_blue = len([u for u in state['units'] 
-                         if u['camp'] == "blue" and u['is_active']])
+                     if u['camp'] == "blue" and u['status'] == "active"])
         return active_red == 0 or active_blue == 0
     
     def render(self, mode='human'):

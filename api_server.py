@@ -6,8 +6,8 @@ app = Flask(__name__)
 sim_state = {
     "terrain": [[0]*80 for _ in range(60)],
     "units": [
-        {"id": 1, "position": [10,10], "camp": "red", "health": 100, "is_active": True, "type": "infantry"},
-        {"id": 2, "position": [60,50], "camp": "blue", "health": 100, "is_active": True, "type": "infantry"}
+        {"id": 1, "position": [10,10], "camp": "red", "health": 100, "status": "active", "type": "infantry"},
+        {"id": 2, "position": [60,50], "camp": "blue", "health": 100, "status": "active", "type": "infantry"}
     ],
     "structures": []
 }
@@ -18,7 +18,7 @@ def init_simulation():
     # 重置单位状态
     for unit in sim_state["units"]:
         unit["health"] = 100
-        unit["is_active"] = True
+        unit["status"] = "active"
     return jsonify({"status": "success"}), 200
 
 @app.route('/api/state')

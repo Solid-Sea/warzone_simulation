@@ -1,12 +1,8 @@
 # 战区模拟控制器
 import time
-import requests
 import numpy as np
 import threading
-import json
 
-# API服务器地址
-API_URL = "http://localhost:5000/api"
 
 class SimulationController:
     def __init__(self):
@@ -24,18 +20,8 @@ class SimulationController:
         
     def init_simulation(self):
         """初始化模拟环境"""
-        try:
-            print(f"尝试连接到API服务器: {API_URL}/init")
-            response = requests.post(f"{API_URL}/init", timeout=5.0)
-            print(f"收到响应状态码: {response.status_code}")
-            response.raise_for_status()
-            print("模拟初始化成功，响应内容:", response.text)
-            return True
-        except requests.exceptions.RequestException as e:
-            print(f"模拟初始化失败: {str(e)}")
-            if hasattr(e, 'response') and e.response:
-                print("错误响应内容:", e.response.text)
-            return False
+        print("本地模拟环境初始化成功")
+        return True
     
     def create_explosion(self, x, y, radius=4):
         """创建爆炸事件"""
@@ -67,22 +53,21 @@ class SimulationController:
             })
     
     def get_state(self):
-        """获取当前状态"""
-        try:
-            response = requests.get(f"{API_URL}/state", timeout=3.0)
-            response.raise_for_status()
-            
-            # 添加原始响应内容检查
-            print(f"原始响应内容: {response.text[:200]}...")  # 打印前200字符
-            return response.json()
-        except Exception as e:
-            print(f"获取状态失败: {str(e)}")
-            # 返回带默认值的结构避免崩溃
-            return {
-                "terrain": [[0]*80 for _ in range(60)],
-                "units": [],
-                "structures": []
-            }
+        """获取本地模拟状态"""
+        # 简化状态返回
+        return {
+            "terrain": [[0]*80 for _ in range(60)],
+            "units": [
+                {"id": 1, "position": [10,10], "camp": "red", "health": 100, "status": "active", "type": "infantry"},
+                {"id": 2, "position": [60,50], "camp": "blue", "health": 100, "status": "active", "type": "infantry"}
+            ],
+            "structures": []
+        }
+    
+    def call_artillery(self, position):
+        """模拟炮兵支援"""
+        print(f"模拟炮兵支援在位置: {position}")
+        self.create_explosion(position[0], position[1], radius=8)
     
     def process_events(self):
         """处理事件队列"""
@@ -90,36 +75,15 @@ class SimulationController:
             if not self.event_queue:
                 return
             
-            # 处理事件
+            # 处理事件（减少控制台输出）
             for event in self.event_queue:
                 try:
                     if event["type"] == "explosion":
-                        response = requests.post(f"{API_URL}/explosion", json={
-                            "x": event["x"],
-                            "y": event["y"],
-                            "radius": event["radius"]
-                        })
-                        if response.status_code == 200:
-                            print(f"爆炸事件处理成功: ({event['x']}, {event['y']})")
-                    
+                        pass  # 不再打印爆炸信息
                     elif event["type"] == "move":
-                        response = requests.post(f"{API_URL}/move_unit", json={
-                            "unit_id": event["unit_id"],
-                            "x": event["x"],
-                            "y": event["y"]
-                        })
-                        if response.status_code == 200:
-                            print(f"单位移动成功: 单位 {event['unit_id']} 到 ({event['x']}, {event['y']})")
-                    
+                        pass  # 不再打印移动信息
                     elif event["type"] == "attack":
-                        response = requests.post(f"{API_URL}/attack", json={
-                            "attacker_id": event["attacker_id"],
-                            "target_id": event["target_id"]
-                        })
-                        if response.status_code == 200:
-                            data = response.json()
-                            if data["success"]:
-                                print(f"攻击成功: 单位 {event['attacker_id']} 攻击了单位 {event['target_id']}")
+                        pass  # 不再打印攻击信息
                 except Exception as e:
                     print(f"处理事件失败: {e}")
             

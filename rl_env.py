@@ -17,18 +17,19 @@ class TensorboardCallback(BaseCallback):
     def _on_step(self) -> bool:
         if self.n_calls % self.check_freq == 0:
             # 记录训练指标
-            self.logger.record("train/mean_reward", np.mean(self.episode_rewards[-100:]))
-            self.logger.record("train/epsilon", self.model.exploration_rate)
+            mean_reward = np.mean(self.episode_rewards[-100:]) if self.episode_rewards else 0
+            self.logger.record("train/mean_reward", mean_reward)
             
-            # 生成战场热力图
-            fig = plt.figure(figsize=(10, 6))
+            # 生成战场热力图（仅记录不显示）
             state = self.training_env.get_attr("sim_controller")[0].get_state()
             if state:
                 terrain = np.array(state['terrain'])
+                fig = plt.figure(figsize=(10, 6))
                 plt.imshow(terrain, cmap='terrain')
                 plt.colorbar()
+                plt.title(f"Step {self.n_calls}")
                 self.logger.record("battlefield", Figure(fig, close=True), exclude=("stdout", "log", "json", "csv"))
-                plt.close()
+                plt.close(fig)
         return True
 
     def _on_rollout_end(self) -> None:
@@ -43,6 +44,10 @@ class WarzoneEnv(gym.Env):
     
     def __init__(self):
         self.sim_controller = SimulationController()
+        self.current_step = 0  # 初始化步数计数器
+        self.initial_red_units = 0
+        self.initial_blue_units = 0
+        self.last_action = None
         self.action_space = spaces.Discrete(6)  # 基础动作空间
         self.observation_space = spaces.Box(
             low=0, high=1, 
@@ -53,6 +58,12 @@ class WarzoneEnv(gym.Env):
         
     def reset(self, seed=None, options=None):
         self.sim_controller.init_simulation()
+        # 获取初始单位数量
+        init_state = self.sim_controller.get_state()
+        self.initial_red_units = len([u for u in init_state['units'] if u['camp'] == "red"])
+        self.initial_blue_units = len([u for u in init_state['units'] if u['camp'] == "blue"])
+        self.current_step = 0
+        self.last_action = None
         observation = self._get_observation()
         info = {}
         return observation, info
@@ -197,27 +208,111 @@ class WarzoneEnv(gym.Env):
 
     def _calculate_reward(self):
         """计算即时奖励"""
-        # 示例奖励函数
         state = self.sim_controller.get_state()
+        if not state:
+            return 0
+            
         reward = 0
         
-        # 歼敌奖励
-        reward += len([u for u in state['units'] 
-            if u['camp'] == "blue" and u['status'] != "active"]) * 10
+        # 实时战场分析
+        active_red = len([u for u in state['units'] if u['camp'] == "red" and u['status'] == "active"])
+        active_blue = len([u for u in state['units'] if u['camp'] == "blue" and u['status'] == "active"])
         
-        # 时间惩罚
-        reward -= 0.1
+        # 基础奖励（歼敌差异）
+        reward += (self.initial_blue_units - active_blue) * 15  # 歼敌奖励
+        reward -= (self.initial_red_units - active_red) * 10  # 友军损失惩罚
+        
+        # 建筑控制奖励
+        central_buildings = [s for s in state.get('structures', []) 
+                            if s['type'] in ['bunker', 'house'] 
+                            and 25 <= s['position'][0] <= 45 
+                            and 15 <= s['position'][1] <= 35]
+        
+        for building in central_buildings:
+            red_nearby = sum(1 for u in state['units'] 
+                            if u['camp'] == "red" and u['status'] == "active"
+                            and abs(u['position'][0] - building['position'][0]) <= 2
+                            and abs(u['position'][1] - building['position'][1]) <= 2)
+            blue_nearby = sum(1 for u in state['units'] 
+                             if u['camp'] == "blue" and u['status'] == "active"
+                             and abs(u['position'][0] - building['position'][0]) <= 2
+                             and abs(u['position'][1] - building['position'][1]) <= 2)
+            
+            # 建筑控制奖励
+            if red_nearby >= 2 and red_nearby > blue_nearby:
+                reward += 5  # 控制关键建筑奖励
+            elif blue_nearby >= 2 and blue_nearby > red_nearby:
+                reward -= 3  # 敌方控制惩罚
+                
+        # 战略行动奖励
+        if self.last_action == 2:  # 攻击
+            reward += 1
+        elif self.last_action == 3:  # 防御
+            reward += 0.5
+            
+        # 时间惩罚（随步数增加）
+        reward -= min(0.2, self.current_step * 0.001)
         
         return reward
     
     def _check_done(self):
-        """检查是否结束"""
+        """综合胜利条件判断"""
         state = self.sim_controller.get_state()
-        active_red = len([u for u in state['units'] 
-                    if u['camp'] == "red" and u['status'] == "active"])
-        active_blue = len([u for u in state['units'] 
-                     if u['camp'] == "blue" and u['status'] == "active"])
-        return active_red == 0 or active_blue == 0
+        if not state:
+            return False
+
+        # 获取存活单位
+        active_red = len([u for u in state['units'] if u['camp'] == "red" and u['status'] == "active"])
+        active_blue = len([u for u in state['units'] if u['camp'] == "blue" and u['status'] == "active"])
+
+        # 优先判断全歼情况：红方全灭则蓝方胜利；蓝方全灭且红方存活则红方胜利
+        if active_red == 0:
+            return True  # 蓝方胜利（包括双方全灭情况）
+        if active_blue == 0 and active_red > 0:
+            return True  # 红方胜利（仅当红方仍有单位时）
+
+        # 建筑占领检查（需要至少3个关键建筑）
+        central_buildings = [s for s in state.get('structures', []) 
+                            if s['type'] in ['bunker', 'house'] 
+                            and 25 <= s['position'][0] <= 45 
+                            and 15 <= s['position'][1] <= 35]
+        if len(central_buildings) < 3:
+            return False  # 没有足够关键建筑时不触发占领胜利
+            
+        red_controlled = 0
+        blue_controlled = 0
+
+        for building in central_buildings:
+            red_nearby = sum(1 for u in state['units'] 
+                            if u['camp'] == "red" and u['status'] == "active"
+                            and abs(u['position'][0] - building['position'][0]) <= 2  # 缩小控制范围
+                            and abs(u['position'][1] - building['position'][1]) <= 2)
+            blue_nearby = sum(1 for u in state['units'] 
+                             if u['camp'] == "blue" and u['status'] == "active"
+                             and abs(u['position'][0] - building['position'][0]) <= 2
+                             and abs(u['position'][1] - building['position'][1]) <= 2)
+
+            # 需要至少2个单位才能控制建筑
+            if red_nearby >= 2 and red_nearby > blue_nearby:
+                red_controlled += 1
+            elif blue_nearby >= 2 and blue_nearby > red_nearby:
+                blue_controlled += 1
+
+        # 胜利条件（控制超过60%关键建筑且保持2个回合）
+        max_steps = 300  # 缩短最大步数
+        self.current_step += 1
+        
+        # 红方占领胜利
+        if red_controlled >= len(central_buildings) * 0.6:
+            return True
+        # 蓝方坚守胜利（步数过半且控制多数建筑）
+        if self.current_step >= max_steps and blue_controlled >= len(central_buildings) * 0.5:
+            return True
+        # 强制结束
+        if self.current_step >= max_steps * 1.5:  
+            return True
+            
+        return False
     
     def render(self, mode='human'):
         """实时渲染战场画面"""
@@ -235,7 +330,7 @@ class WarzoneEnv(gym.Env):
         return super().render(mode=mode)
 
 def train():
-    """启动训练流程"""
+    """启动训练流程（简化输出版）"""
     from stable_baselines3 import PPO
     from stable_baselines3.common.monitor import Monitor
     from stable_baselines3.common.vec_env import DummyVecEnv
@@ -245,11 +340,11 @@ def train():
     env = Monitor(env)
     env = DummyVecEnv([lambda: env])
     
-    # 配置模型
+    # 配置模型（关闭详细输出）
     model = PPO(
         "MlpPolicy",
         env,
-        verbose=1,
+        verbose=0,  # 关闭详细输出
         tensorboard_log="./tb_logs/",
         learning_rate=3e-4,
         n_steps=2048,
@@ -260,12 +355,53 @@ def train():
         clip_range=0.2
     )
     
+    # 自定义回调优化输出
+    class SimpleCallback(BaseCallback):
+        def __init__(self):
+            super().__init__()
+            self.red_wins = 0
+            self.blue_wins = 0
+            self.total_rollouts = 0
+            
+        def _on_step(self) -> bool:
+            """必需实现方法，但不执行具体操作"""
+            return True
+            
+        def _on_rollout_end(self) -> None:
+            self.total_rollouts += 1
+            state = self.training_env.get_attr("sim_controller")[0].get_state()
+            
+            if state:
+                active_red = len([u for u in state['units'] if u['camp']=="red" and u['status']=="active"])
+                active_blue = len([u for u in state['units'] if u['camp']=="blue" and u['status']=="active"])
+                
+                # 判断胜方
+                if active_red == 0 and active_blue > 0:
+                    winner = "蓝方"
+                    self.blue_wins += 1
+                elif active_blue == 0:
+                    winner = "红方"
+                    self.red_wins += 1
+                else:
+                    winner = "平局"
+                
+                # 计算胜率
+                red_win_rate = (self.red_wins / self.total_rollouts) * 100
+                blue_win_rate = (self.blue_wins / self.total_rollouts) * 100
+                
+                print(f"轮次 {self.total_rollouts}: {winner}胜利 | "
+                      f"红方胜率: {red_win_rate:.1f}% | "
+                      f"蓝方胜率: {blue_win_rate:.1f}% | "
+                      f"红方剩余: {active_red} | "
+                      f"蓝方剩余: {active_blue}")
+            else:
+                print(f"轮次 {self.total_rollouts}: 无法获取状态")
+    
     # 开始训练
     model.learn(
         total_timesteps=1_000_000,
-        callback=TensorboardCallback(),
-        tb_log_name="warzone_ppo",
-        progress_bar=True
+        callback=SimpleCallback(),  # 使用优化后的回调
+        tb_log_name="warzone_ppo"
     )
     
     # 保存最终模型

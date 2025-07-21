@@ -1,0 +1,26 @@
+[
+  {
+    "config": {
+      "total_timesteps": 1000,
+      "learning_rate": 0.001
+    },
+    "training_time": 21.526193618774414,
+    "final_reward": 239.99977111816406
+  },
+  {
+    "config": {
+      "total_timesteps": 5000,
+      "learning_rate": 0.0001
+    },
+    "training_time": 50.385737657547,
+    "final_reward": -126.47012329101562
+  },
+  {
+    "config": {
+      "total_timesteps": 10000,
+      "learning_rate": 0.0001
+    },
+    "training_time": 84.34622859954834,
+    "final_reward": 1678.7020263671875
+  }
+]

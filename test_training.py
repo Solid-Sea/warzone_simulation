@@ -1,208 +1,274 @@
+#!/usr/bin/env python3
 """
-增强的测试和训练脚本 - 集成优化后的环境
+战区AI训练测试脚本 - 完整版
+包含模型训练、评估、保存和加载功能
 """
+
 import os
+import sys
+import json
+import time
 import numpy as np
-import torch
 from rl_env import WarzoneEnv, train_model, evaluate_model
 from stable_baselines3 import PPO
-from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
-import time
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+import warnings
+warnings.filterwarnings("ignore")
 
-def create_enhanced_model(env, total_timesteps=10000):
-    """创建增强的PPO模型"""
-    print("创建增强PPO模型...")
+class TrainingConfig:
+    """训练配置类"""
+    def __init__(self):
+        self.config = {
+            "training": {
+                "total_timesteps": 50000,
+                "learning_rate": 1e-4,
+                "n_steps": 2048,
+                "batch_size": 256,
+                "n_epochs": 10,
+                "gamma": 0.99,
+                "gae_lambda": 0.95,
+                "clip_range": 0.2
+            },
+            "evaluation": {
+                "eval_freq": 10000,
+                "n_eval_episodes": 10,
+                "save_freq": 25000
+            },
+            "environment": {
+                "width": 80,
+                "height": 60,
+                "max_steps": 500
+            }
+        }
     
-    # 增强的PPO配置
-    model = PPO(
-        "MlpPolicy",
-        env,
-        learning_rate=3e-4,
-        n_steps=1024,
-        batch_size=256,
-        n_epochs=10,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        clip_range_vf=0.2,
-        ent_coef=0.01,
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-        verbose=1,
-        tensorboard_log="./logs/enhanced_training"
-    )
+    def save(self, path):
+        with open(path, 'w') as f:
+            json.dump(self.config, f, indent=2)
     
-    return model
+    def load(self, path):
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                self.config.update(json.load(f))
 
-def run_comprehensive_training():
-    """运行综合训练流程"""
-    print("=" * 60)
-    print("启动综合训练流程...")
-    print("=" * 60)
+def create_env(config_path=None):
+    """创建环境包装器"""
+    def _init():
+        env = WarzoneEnv(config_path=config_path)
+        env = Monitor(env)  # 添加监控
+        return env
+    return _init
+
+def setup_callbacks(model_dir, eval_env):
+    """设置训练回调"""
+    callbacks = []
     
-    # 创建环境
-    env = WarzoneEnv()
-    env = Monitor(env)  # 监控环境
-    
-    # 创建模型
-    model = create_enhanced_model(env, total_timesteps=20000)
-    
-    # 设置回调
-    checkpoint_callback = CheckpointCallback(
-        save_freq=1000,
-        save_path="./models/checkpoints/",
-        name_prefix="warzone_model"
-    )
-    
-    eval_env = WarzoneEnv()
+    # 评估回调
     eval_callback = EvalCallback(
         eval_env,
-        best_model_save_path="./models/best_model",
-        log_path="./logs/eval",
-        eval_freq=500,
+        best_model_save_path=os.path.join(model_dir, "best_model"),
+        log_path=os.path.join(model_dir, "eval_logs"),
+        eval_freq=10000,
+        n_eval_episodes=10,
         deterministic=True,
         render=False
     )
+    callbacks.append(eval_callback)
+    
+    # 检查点回调
+    checkpoint_callback = CheckpointCallback(
+        save_freq=25000,
+        save_path=os.path.join(model_dir, "checkpoints"),
+        name_prefix="warzone_model"
+    )
+    callbacks.append(checkpoint_callback)
+    
+    return callbacks
+
+def run_training():
+    """运行完整训练流程"""
+    print("🎯 启动战区AI训练系统...")
+    
+    # 创建目录
+    model_dir = "models"
+    os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(os.path.join(model_dir, "checkpoints"), exist_ok=True)
+    os.makedirs(os.path.join(model_dir, "eval_logs"), exist_ok=True)
+    os.makedirs(os.path.join(model_dir, "logs"), exist_ok=True)
+    
+    # 保存配置
+    config = TrainingConfig()
+    config.save(os.path.join(model_dir, "training_config.json"))
+    
+    # 创建环境
+    print("🌍 创建训练环境...")
+    train_env = DummyVecEnv([create_env() for _ in range(1)])
+    eval_env = DummyVecEnv([create_env() for _ in range(1)])
+    
+    # 创建模型
+    print("🤖 初始化PPO模型...")
+    model = PPO(
+        "MlpPolicy",
+        train_env,
+        learning_rate=config.config["training"]["learning_rate"],
+        n_steps=config.config["training"]["n_steps"],
+        batch_size=config.config["training"]["batch_size"],
+        n_epochs=config.config["training"]["n_epochs"],
+        gamma=config.config["training"]["gamma"],
+        gae_lambda=config.config["training"]["gae_lambda"],
+        clip_range=config.config["training"]["clip_range"],
+        verbose=1,
+        tensorboard_log=os.path.join(model_dir, "logs")
+    )
+    
+    # 设置回调
+    callbacks = setup_callbacks(model_dir, eval_env)
     
     # 开始训练
-    print("开始增强训练...")
+    print("🚀 开始训练...")
     start_time = time.time()
     
     model.learn(
-        total_timesteps=20000,
-        callback=[checkpoint_callback, eval_callback],
+        total_timesteps=config.config["training"]["total_timesteps"],
+        callback=callbacks,
         progress_bar=True
     )
     
     training_time = time.time() - start_time
-    print(f"训练完成！耗时: {training_time:.2f}秒")
+    print(f"✅ 训练完成! 耗时: {training_time:.2f}秒")
     
     # 保存最终模型
-    os.makedirs("models", exist_ok=True)
-    final_model_path = "models/warzone_final_model"
+    final_model_path = os.path.join(model_dir, "warzone_final_model")
     model.save(final_model_path)
-    print(f"最终模型已保存到: {final_model_path}")
+    print(f"💾 最终模型已保存: {final_model_path}")
     
     return model
 
-def test_model_performance(model, test_episodes=10):
-    """测试模型性能"""
-    print("\n" + "=" * 60)
-    print("开始模型性能测试...")
-    print("=" * 60)
+def quick_test():
+    """快速测试训练流程"""
+    print("🧪 运行快速测试...")
     
+    # 创建环境
     env = WarzoneEnv()
     
-    # 运行测试
-    test_rewards = []
-    win_rates = []
+    # 测试环境
+    obs, _ = env.reset()
+    print(f"观察空间形状: {obs.shape}")
     
-    for episode in range(test_episodes):
-        obs, _ = env.reset()
-        episode_reward = 0
-        done = False
-        step_count = 0
+    # 测试随机动作
+    for step in range(5):
+        action = env.action_space.sample()
+        obs, reward, terminated, truncated, info = env.step(action)
+        print(f"步骤 {step+1}: 动作={action}, 奖励={reward:.2f}, 红方={info['red_units']}, 蓝方={info['blue_units']}")
         
-        # 记录初始单位数量
-        initial_red = len([u for u in env.units.values() if u["camp"] == "red"])
-        initial_blue = len([u for u in env.units.values() if u["camp"] == "blue"])
-        
-        while not done:
-            action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, _ = env.step(action)
-            episode_reward += reward
-            step_count += 1
-            done = terminated or truncated
-        
-        # 计算胜率
-        final_red = len([u for u in env.units.values() if u["camp"] == "red"])
-        final_blue = len([u for u in env.units.values() if u["camp"] == "blue"])
-        
-        win = final_red > 0 and final_blue == 0
-        win_rates.append(1.0 if win else 0.0)
-        
-        test_rewards.append(episode_reward)
-        
-        print(f"测试回合 {episode + 1}:")
-        print(f"  奖励: {episode_reward:.2f}")
-        print(f"  步数: {step_count}")
-        print(f"  红方存活: {final_red}/{initial_red}")
-        print(f"  蓝方存活: {final_blue}/{initial_blue}")
-        print(f"  胜利: {'是' if win else '否'}")
-        print("-" * 40)
+        if terminated or truncated:
+            break
     
-    # 统计结果
-    avg_reward = np.mean(test_rewards)
-    avg_win_rate = np.mean(win_rates)
-    
-    print("\n性能测试结果:")
-    print(f"平均奖励: {avg_reward:.2f}")
-    print(f"胜率: {avg_win_rate:.2%}")
-    print(f"标准差: {np.std(test_rewards):.2f}")
-    
-    return {
-        "average_reward": avg_reward,
-        "win_rate": avg_win_rate,
-        "std_reward": np.std(test_rewards)
-    }
+    print("✅ 快速测试完成")
 
-def benchmark_training_speed():
-    """基准测试训练速度"""
-    print("\n" + "=" * 60)
-    print("开始训练速度基准测试...")
-    print("=" * 60)
+def load_and_evaluate(model_path=None):
+    """加载并评估模型"""
+    if model_path is None:
+        model_path = "models/warzone_final_model"
     
-    env = WarzoneEnv()
-    model = create_enhanced_model(env, total_timesteps=5000)
+    if not os.path.exists(f"{model_path}.zip"):
+        print(f"❌ 模型文件不存在: {model_path}")
+        return
     
-    start_time = time.time()
-    model.learn(total_timesteps=5000, progress_bar=False)
-    training_time = time.time() - start_time
+    print("📊 加载并评估模型...")
     
-    steps_per_second = 5000 / training_time
+    # 加载模型
+    model = PPO.load(model_path)
     
-    print(f"训练速度: {steps_per_second:.2f} steps/second")
-    print(f"总训练时间: {training_time:.2f}秒")
+    # 评估
+    evaluate_model(model, episodes=20)
     
-    return steps_per_second
+    print("✅ 评估完成")
+
+def benchmark_training():
+    """训练性能基准测试"""
+    print("⚡ 运行训练性能基准测试...")
+    
+    # 测试不同配置
+    configs = [
+        {"total_timesteps": 1000, "learning_rate": 1e-3},
+        {"total_timesteps": 5000, "learning_rate": 1e-4},
+        {"total_timesteps": 10000, "learning_rate": 1e-4}
+    ]
+    
+    results = []
+    
+    for i, cfg in enumerate(configs):
+        print(f"\n测试配置 {i+1}: {cfg}")
+        
+        start_time = time.time()
+        model = train_model(**cfg)
+        training_time = time.time() - start_time
+        
+        # 快速评估
+        env = WarzoneEnv()
+        obs, _ = env.reset()
+        total_reward = 0
+        
+        for _ in range(100):
+            action, _ = model.predict(obs, deterministic=True)
+            obs, reward, terminated, truncated, info = env.step(action)
+            total_reward += reward
+            
+            if terminated or truncated:
+                break
+        
+        result = {
+            "config": cfg,
+            "training_time": training_time,
+            "final_reward": float(total_reward)
+        }
+        results.append(result)
+        
+        print(f"训练时间: {training_time:.2f}s, 最终奖励: {total_reward:.2f}")
+    
+    # 保存结果
+    def convert_to_serializable(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.float32):
+            return float(obj)
+        elif isinstance(obj, np.int32):
+            return int(obj)
+        return obj
+    
+    with open("benchmark_results.json", 'w') as f:
+        json.dump(results, f, indent=2, default=convert_to_serializable)
+    
+    print("✅ 基准测试完成，结果已保存")
 
 def main():
-    """主测试流程"""
-    print("战区AI训练测试系统 v2.0")
-    print("=" * 60)
+    """主函数"""
+    import argparse
     
-    # 检查环境
-    print("1. 环境检查...")
-    env = WarzoneEnv()
-    obs, _ = env.reset()
-    print(f"   观察空间形状: {obs.shape}")
-    print(f"   动作空间: {env.action_space}")
-    print("   ✓ 环境正常")
+    parser = argparse.ArgumentParser(description="战区AI训练系统")
+    parser.add_argument("--mode", choices=["train", "test", "evaluate", "benchmark"], 
+                        default="test", help="运行模式")
+    parser.add_argument("--model-path", type=str, help="模型路径")
+    parser.add_argument("--timesteps", type=int, default=50000, help="训练步数")
     
-    # 运行训练
-    print("\n2. 开始训练...")
-    model = run_comprehensive_training()
+    args = parser.parse_args()
     
-    # 性能测试
-    print("\n3. 性能测试...")
-    results = test_model_performance(model, test_episodes=5)
-    
-    # 速度基准
-    print("\n4. 速度基准测试...")
-    speed = benchmark_training_speed()
-    
-    # 总结报告
-    print("\n" + "=" * 60)
-    print("训练测试总结报告")
-    print("=" * 60)
-    print(f"平均奖励: {results['average_reward']:.2f}")
-    print(f"胜率: {results['win_rate']:.2%}")
-    print(f"训练速度: {speed:.2f} steps/second")
-    print("=" * 60)
-    
-    return model, results
+    if args.mode == "train":
+        config = TrainingConfig()
+        config.config["training"]["total_timesteps"] = args.timesteps
+        run_training()
+    elif args.mode == "test":
+        quick_test()
+    elif args.mode == "evaluate":
+        load_and_evaluate(args.model_path)
+    elif args.mode == "benchmark":
+        benchmark_training()
 
 if __name__ == "__main__":
-    model, results = main()
+    # 如果没有参数，运行快速测试
+    if len(sys.argv) == 1:
+        quick_test()
+    else:
+        main()

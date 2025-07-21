@@ -118,4 +118,3 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 ## 联系方式
 - 项目地址: https://github.com/Solid-Sea/warzone_simulation
 - 问题反馈: https://github.com/Solid-Sea/warzone_simulation/issues
->>>>>>> REPLACE

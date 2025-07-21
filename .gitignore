@@ -1,4 +1,9 @@
 tb_logs
 tb_logs_test
 .conda
-#__pycache__
+__pycache__/*.pyc
+./core/__pycache__/*.pyc
+.pip_cache
+logs
+models
+*.pyc
